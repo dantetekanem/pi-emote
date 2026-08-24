@@ -1,37 +1,12 @@
 import { getCapabilities } from "@earendil-works/pi-tui";
 import type { TerminalMapping, ResolvedRenderer } from "./types.js";
+import { detectTerminalName, isMultiplexerName, type MultiplexerName } from "./detect_terminal.js";
 import { checkTmuxPassthrough, detectOuterTerminal } from "./tmux.js";
 import { log } from "./log.js";
 
+export { detectTerminalName } from "./detect_terminal.js";
+
 type Protocol = "kitty" | "kitty-unicode" | "iterm2" | "ascii";
-
-const MULTIPLEXERS = new Set(["tmux", "screen", "zellij"]);
-
-/**
- * Detect the terminal or multiplexer name from environment variables.
- * Multiplexers are checked first — they set vars that leak through from
- * the outer terminal emulator.
- */
-export function detectTerminalName(): string {
-  const termProgram = (process.env.TERM_PROGRAM ?? "").toLowerCase();
-  const term = (process.env.TERM ?? "").toLowerCase();
-
-  // --- Multiplexers (checked first) ---
-  if (process.env.ZELLIJ_SESSION_NAME || process.env.ZELLIJ) return "zellij";
-  if (process.env.TMUX || term.startsWith("tmux")) return "tmux";
-  if (term.startsWith("screen")) return "screen";
-
-  // --- Terminal emulators ---
-  if (process.env.KITTY_WINDOW_ID || termProgram === "kitty") return "kitty";
-  if (process.env.GHOSTTY_RESOURCES_DIR || termProgram === "ghostty" || term.includes("ghostty")) return "ghostty";
-  if (process.env.WEZTERM_PANE || termProgram === "wezterm") return "wezterm";
-  if (process.env.ITERM_SESSION_ID || termProgram === "iterm.app") return "iterm2";
-  if (termProgram === "vscode") return "vscode";
-  if (termProgram === "alacritty") return "alacritty";
-  if (termProgram === "warpterminal") return "warpterminal";
-
-  return "unknown";
-}
 
 /**
  * Resolve which renderer to use.
@@ -49,7 +24,7 @@ export function resolveRenderer(
   const name = detectTerminalName();
   log(`terminal: detected "${name}"`);
 
-  if (MULTIPLEXERS.has(name)) {
+  if (isMultiplexerName(name)) {
     return resolveMultiplexer(name, terminals, userConfiguredTerminals);
   }
 
@@ -60,11 +35,11 @@ export function resolveRenderer(
  * Resolve renderer for a multiplexer session.
  */
 function resolveMultiplexer(
-  name: string,
+  name: MultiplexerName,
   terminals: TerminalMapping[],
   userConfiguredTerminals: Set<string>,
 ): ResolvedRenderer {
-  const multiplexer = name as "tmux" | "screen" | "zellij";
+  const multiplexer = name;
   const base: Pick<ResolvedRenderer, "multiplexer" | "warningLevel"> = {
     multiplexer,
     warningLevel: "warning",
@@ -87,16 +62,18 @@ function resolveMultiplexer(
     return resolveTmux(base);
   }
 
-  // zellij and screen — not supported yet
-  const label = name === "zellij" ? "zellij" : "screen";
-  log(`terminal: ${label} detected, image passthrough not supported`);
+  // Other multiplexers use the stable text renderer unless explicitly overridden.
+  const label = name;
+  log(`terminal: ${label} detected, defaulting to ASCII`);
   return {
     ...base,
     protocol: "ascii",
     warningLevel: "info",
     warning: isUserConfigured
       ? null
-      : `[pi-emote] ${label} detected. Image passthrough not supported... yet! Defaulting to ASCII.`,
+      : name === "herdr"
+        ? "[pi-emote] Herdr detected. Defaulting to ASCII because animated Kitty graphics can flicker inside Herdr."
+        : `[pi-emote] ${label} detected. Image passthrough not supported... yet! Defaulting to ASCII.`,
   };
 }
 

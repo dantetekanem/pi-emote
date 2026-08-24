@@ -9,6 +9,9 @@ import { log } from "./log.js";
 const PLACEHOLDER = "\u{10EEEE}";
 const CHUNK_SIZE = 4096;
 
+type SequenceWrapper = (sequence: string) => string;
+const directSequence: SequenceWrapper = (sequence) => sequence;
+
 /**
  * Row/column diacritics for kitty Unicode placeholders.
  * Derived from kitty's rowcolumn-diacritics.txt (combining class 230).
@@ -51,7 +54,7 @@ function weightedRandomPick(weights: Record<string, number>): string {
 
 /**
  * Build the kitty graphics transmit sequence (with virtual placement U=1).
- * Handles chunking for large payloads. Wrapped in tmux passthrough.
+ * Handles chunking for large payloads.
  */
 function buildTransmitSequence(base64: string, imageId: number, cols: number, rows: number): string {
   const chunks: string[] = [];
@@ -76,7 +79,7 @@ function buildTransmitSequence(base64: string, imageId: number, cols: number, ro
     chunks.push(`\x1b_Ga=T,f=100,q=2,U=1,i=${imageId},c=${cols},r=${rows},m=0;\x1b\\`);
   }
 
-  return wrapTmuxPassthrough(chunks.join(""));
+  return chunks.join("");
 }
 
 /**
@@ -102,25 +105,27 @@ function buildPlaceholderLines(imageId: number, cols: number, rows: number): str
 }
 
 /**
- * Kitty Unicode Placeholder renderer for tmux.
+ * Kitty Unicode Placeholder renderer.
  *
  * Uses kitty's virtual placement + Unicode placeholder approach:
- * 1. Transmit image data via DCS passthrough (creates virtual placement)
- * 2. Display via U+10EEEE placeholder characters (regular text)
+ * 1. Transmit image data once when the frame changes
+ * 2. Display it through U+10EEEE placeholder characters in the TUI
  *
- * This makes the image behave like normal text — tmux constrains it to
- * the pane, and switching sessions clears it naturally.
+ * This keeps ordinary TUI redraws from retransmitting the full PNG. A sequence
+ * wrapper adapts the same renderer for tmux passthrough.
  */
-export class TmuxKittyUnicodeRenderer implements Renderer {
+export class KittyUnicodeRenderer implements Renderer {
   private tuiRef: TUI | null = null;
   private frameMap: Map<EmoteState, FrameSet> = new Map();
   private lastShownBase64: string | null = null;
   private currentFrame: RenderedFrame | null = null;
   private size: number;
   private imageId: number;
+  private wrapSequence: SequenceWrapper;
 
-  constructor(size: number) {
+  constructor(size: number, wrapSequence: SequenceWrapper = directSequence) {
     this.size = size;
+    this.wrapSequence = wrapSequence;
     // Random 24-bit image ID (required for truecolor encoding)
     this.imageId = Math.floor(Math.random() * 0xFFFFFE) + 1;
   }
@@ -146,14 +151,14 @@ export class TmuxKittyUnicodeRenderer implements Renderer {
     const cols = this.size;
     const rows = calculateImageRows(dims, cols, cellDims);
 
-    // Transmit image data via passthrough (uploads to terminal's image store)
+    // Upload only when the frame changes; placeholders preserve placement.
     const transmit = buildTransmitSequence(base64, this.imageId, cols, rows);
-    process.stdout.write(transmit);
+    process.stdout.write(this.wrapSequence(transmit));
 
     // Build placeholder grid as text lines
     const lines = buildPlaceholderLines(this.imageId, cols, rows);
 
-    log(`TmuxKittyUnicodeRenderer.show: dims=${dims.widthPx}x${dims.heightPx}, cols=${cols}, rows=${rows}, imageId=${this.imageId}`);
+    log(`KittyUnicodeRenderer.show: dims=${dims.widthPx}x${dims.heightPx}, cols=${cols}, rows=${rows}, imageId=${this.imageId}`);
 
     this.currentFrame = { kind: "placeholder", lines, rows };
     this.tuiRef?.requestRender();
@@ -218,11 +223,18 @@ export class TmuxKittyUnicodeRenderer implements Renderer {
   dispose() {
     // Delete image from terminal's graphics memory
     const del = `\x1b_Ga=d,d=I,i=${this.imageId},q=2\x1b\\`;
-    process.stdout.write(wrapTmuxPassthrough(del));
+    process.stdout.write(this.wrapSequence(del));
     this.currentFrame = null;
   }
 
   resetCache() {
     this.lastShownBase64 = null;
+  }
+}
+
+/** Kitty Unicode placeholders with tmux DCS passthrough. */
+export class TmuxKittyUnicodeRenderer extends KittyUnicodeRenderer {
+  constructor(size: number) {
+    super(size, wrapTmuxPassthrough);
   }
 }

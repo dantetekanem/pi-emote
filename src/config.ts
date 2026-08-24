@@ -48,6 +48,7 @@ const DEFAULTS: Config = {
   cycleMs: 500,
   emotes: [{ model: "*", "emote-set": "default" }],
   terminals: [
+    { match: "herdr", render: "kitty-unicode" },
     { match: "zellij", render: "ascii" },
     { match: "tmux", render: "auto" },
     { match: "screen", render: "ascii" },

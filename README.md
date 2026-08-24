@@ -32,7 +32,7 @@ Community-contributed emote sets. [Submit yours via PR!](#custom-emotes)
 ## Install
 
 ```bash
-pi install git:github.com/cgxeiji/pi-emote
+pi install git:github.com/dantetekanem/pi-emote
 ```
 
 ## States

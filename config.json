@@ -17,6 +17,7 @@
     { "model": "*claude*", "emote-set": "red" }
   ],
   "terminals": [
+    { "match": "herdr", "render": "kitty-unicode" },
     { "match": "zellij", "render": "ascii" },
     { "match": "tmux", "render": "auto" },
     { "match": "screen", "render": "ascii" },

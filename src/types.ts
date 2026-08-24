@@ -60,7 +60,7 @@ export interface TerminalMapping {
 
 export interface ResolvedRenderer {
   protocol: "kitty" | "kitty-unicode" | "iterm2" | "ascii";
-  multiplexer: "tmux" | "screen" | "zellij" | null;
+  multiplexer: "herdr" | "tmux" | "screen" | "zellij" | null;
   warning: string | null;
   warningLevel: "warning" | "info";
 }

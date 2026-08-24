@@ -10,7 +10,7 @@ import { loadLayeredConfig } from "./config.js";
 import { resolveEmoteSet, findEmoteSetDir, loadEmotesConfig } from "./emotes.js";
 import { KittyRenderer } from "./render_kitty.js";
 import { TmuxKittyRenderer } from "./render_tmux_kitty.js";
-import { TmuxKittyUnicodeRenderer } from "./render_tmux_kitty_unicode.js";
+import { KittyUnicodeRenderer, TmuxKittyUnicodeRenderer } from "./render_tmux_kitty_unicode.js";
 import { ITermRenderer } from "./render_iterm.js";
 import { TmuxITermRenderer } from "./render_tmux_iterm.js";
 import { AsciiRenderer } from "./render_ascii.js";
@@ -44,8 +44,12 @@ function toolNameToState(toolName: string): EmoteState {
 function createRendererFromResolved(resolved: ResolvedRenderer, size: number): Renderer {
   const { protocol, multiplexer } = resolved;
   if (protocol === "kitty-unicode") {
-    log(`createRenderer: using TmuxKittyUnicodeRenderer`);
-    return new TmuxKittyUnicodeRenderer(size);
+    if (multiplexer === "tmux") {
+      log(`createRenderer: using TmuxKittyUnicodeRenderer`);
+      return new TmuxKittyUnicodeRenderer(size);
+    }
+    log(`createRenderer: using KittyUnicodeRenderer`);
+    return new KittyUnicodeRenderer(size);
   }
   if (protocol === "kitty") {
     if (multiplexer === "tmux") {
