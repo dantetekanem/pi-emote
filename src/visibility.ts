@@ -37,6 +37,22 @@ export function createWidgetVisibility(actions: VisibilityActions): WidgetVisibi
   };
 }
 
+export function restoreWidgetVisibility(
+  visibility: WidgetVisibility,
+  entries: readonly { type: string; customType?: string; data?: unknown }[],
+): boolean {
+  let visible = true;
+  for (const entry of entries) {
+    if (entry.type !== "custom" || entry.customType !== "pi-emote-visibility") continue;
+    const data = entry.data;
+    if (data && typeof data === "object" &&
+        "visible" in data && typeof data.visible === "boolean") {
+      visible = data.visible;
+    }
+  }
+  return visible ? visibility.show() : visibility.hide();
+}
+
 export function registerVisibilityCommand(pi: ExtensionAPI, visibility: WidgetVisibility) {
   pi.registerCommand("pi-emote-toggle", {
     description: "Show or hide the pi-emote widget",
@@ -44,6 +60,7 @@ export function registerVisibilityCommand(pi: ExtensionAPI, visibility: WidgetVi
       if (!ctx.hasUI) return;
 
       const visible = visibility.toggle();
+      pi.appendEntry("pi-emote-visibility", { visible });
       ctx.ui.notify(`[pi-emote] Widget ${visible ? "shown" : "hidden"}.`, "info");
     },
   });

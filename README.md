@@ -52,7 +52,7 @@ pi install git:github.com/cgxeiji/pi-emote
 
 ## Command
 
-Use `/pi-emote-toggle` to hide or restore the widget for the current session. This does not change the persistent `enabled` setting.
+Use `/pi-emote-toggle` to hide or restore the widget for the current session. Your choice survives `/reload` and resuming that session. New sessions use the configured default; the command does not change the `enabled` setting.
 
 ## Config
 

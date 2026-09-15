@@ -17,7 +17,7 @@ import { AsciiRenderer } from "./render_ascii.js";
 import { Animator } from "./animator.js";
 import { createWidgetFactory } from "./widget.js";
 import { resolveRenderer } from "./terminal.js";
-import { createWidgetVisibility, registerVisibilityCommand } from "./visibility.js";
+import { createWidgetVisibility, registerVisibilityCommand, restoreWidgetVisibility } from "./visibility.js";
 
 const IMAGE_STATES = ["hi", "idle", "think", "talk", "read", "write", "tool", "success", "failure", "compact"];
 
@@ -196,7 +196,7 @@ export default function (pi: ExtensionAPI) {
     log(`session_start: model="${modelId}" thinkingLevel="${thinkingLevel}" set="${setName}" dir="${findEmoteSetDir(setName, extDir, cwd)}"`);
     loadEmoteSet(setName);
 
-    visibility.show();
+    if (!restoreWidgetVisibility(visibility, ctx.sessionManager.getEntries())) return;
     introTimer = setTimeout(() => {
       introTimer = null;
       if (visibility.isVisible()) animator.transitionTo("hi");
