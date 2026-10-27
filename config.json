@@ -13,8 +13,7 @@
   "talkTickMs": 120,
   "cycleMs": 500,
   "emotes": [
-    { "model": "*", "emote-set": "default" },
-    { "model": "*claude*", "emote-set": "red" }
+    { "model": "*", "emote-set": "diana" }
   ],
   "terminals": [
     { "match": "herdr", "render": "kitty-unicode" },

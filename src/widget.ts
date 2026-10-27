@@ -4,6 +4,7 @@ import type { Animator } from "./animator.js";
 import type { RenderedFrame } from "./renderer.js";
 import { log } from "./log.js";
 import { resolveProgressColor } from "./theme.js";
+import { formatSessionCost } from "./session-cost.js";
 
 // --- Token formatting ---
 
@@ -117,7 +118,8 @@ function buildInfoLines(width: number, avatarWidth: number, ctxRef: any, pi: any
   const latestPromptTokens = latestInput + latestCacheRead + latestCacheWrite;
   const cacheHitRate = latestPromptTokens > 0 ? (latestCacheRead / latestPromptTokens) * 100 : 0;
   
-  const statsStr = `↑${formatTokens(totalInput)} ↓${formatTokens(totalOutput)} ⇞${cacheHitRate.toFixed(1)}% $${totalCost.toFixed(3)}`;
+  const cost = formatSessionCost(pi.events, ctxRef.sessionManager.getSessionId(), totalCost);
+  const statsStr = `↑${formatTokens(totalInput)} ↓${formatTokens(totalOutput)} ⇞${cacheHitRate.toFixed(1)}% ${cost}`;
   lines.push(statsStr);
 
   // Line 4: Current working directory
@@ -265,6 +267,7 @@ export interface WidgetDeps {
 export function createWidgetFactory(deps: WidgetDeps) {
   return (_tui: any, theme: any) => {
     deps.animator.setTui(_tui);
+    const unsubscribeCost = deps.pi.events?.on("pi-extended-teams:cost-changed", () => _tui.requestRender());
     return {
       render(width: number): string[] {
         const { animator, config } = deps;
@@ -307,6 +310,7 @@ export function createWidgetFactory(deps: WidgetDeps) {
       },
       invalidate() {},
       dispose() {
+        unsubscribeCost?.();
         deps.animator.setTui(null);
       },
     };
