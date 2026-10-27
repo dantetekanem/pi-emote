@@ -19,7 +19,6 @@ Community-contributed emote sets. [Submit yours via PR!](#custom-emotes)
 | <img src="emotes/default/hi/hi1.png" width="64"> | `default` | [@cgxeiji](https://github.com/cgxeiji) |
 | <img src="emotes/aza_choi/hi/hi_1.png" width="64"> | `aza_choi` | [@shennguyenrs](https://github.com/shennguyenrs) |
 | <img src="emotes/aza_choi_nobg/hi/hi_1.png" width="64"> | `aza_choi_nobg` | [@shennguyenrs](https://github.com/shennguyenrs) |
-| <img src="emotes/diana/hi/hi_1.png" width="64"> | `diana` | [@dantetekanem](https://github.com/dantetekanem) |
 | <img src="emotes/red/hi/hi1.png" width="64"> | `red` | [@cgxeiji](https://github.com/cgxeiji) |
 
 ### ASCII Sets
