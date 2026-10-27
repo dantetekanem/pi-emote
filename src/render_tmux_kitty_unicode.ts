@@ -153,7 +153,9 @@ export class KittyUnicodeRenderer implements Renderer {
 
     // Upload only when the frame changes; placeholders preserve placement.
     const transmit = buildTransmitSequence(base64, this.imageId, cols, rows);
-    process.stdout.write(this.wrapSequence(transmit));
+    // Same-ID uploads delete the old image on their first chunk. Keep that gap
+    // out of Herdr/Ghostty redraws, including through tmux passthrough.
+    process.stdout.write(this.wrapSequence(`\x1b[?2026h${transmit}\x1b[?2026l`));
 
     // Build placeholder grid as text lines
     const lines = buildPlaceholderLines(this.imageId, cols, rows);
