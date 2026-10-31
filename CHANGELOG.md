@@ -2,10 +2,17 @@
 
 All notable changes to pi-emote will be documented in this file.
 
-## Unreleased
+## v0.4.0
 
 ### Added
-- **Widget visibility command** — `/pi-emote-toggle` hides or restores the widget for the current session without changing the persistent `enabled` setting.
+- Ordered animation clips with loop-boundary transitions, minimum expression hold times, and reduced-motion support.
+- Optional Jev reactions after agent settlement, with bounded input, cancellation, and stale-result suppression.
+- Wake-on-typing for idle and sleepy clip avatars without transmitting unsent drafts.
+- `/pi-emote switch` opens a selector for installed emote sets and remembers the choice for the session.
+- Autocomplete for `/pi-emote switch` and `/pi-emote toggle`.
+
+### Changed
+- `/pi-emote toggle` replaces `/pi-emote-toggle` for hiding or restoring the widget without changing the persistent `enabled` setting.
 
 ### Fixed
 - Remember the widget visibility choice across `/reload` and session resume.

@@ -50,9 +50,15 @@ pi install git:github.com/dantetekanem/pi-emote
 | failure | Failed tool execution |
 | compact | Context compaction |
 
-## Command
+## Commands
 
-Use `/pi-emote-toggle` to hide or restore the widget for the current session. Your choice survives `/reload` and resuming that session. New sessions use the configured default; the command does not change the `enabled` setting.
+Use `/pi-emote toggle` to hide or restore the widget for the current session. Your choice survives `/reload` and resuming that session. New sessions use the configured default; the command does not change the `enabled` setting.
+
+Use `/pi-emote switch` to select from a list of all installed emote sets, sorted alphabetically, including image, ASCII, and custom sets from the extension, user, and project directories. Press Escape to cancel without changing the avatar. Sets with the same name appear once, using the usual project → user → extension priority. Matching animation clips retain their playback position; other sets start fresh. The choice follows the current session branch, survives reload/resume, and overrides model mappings until a new session. The command does not change your Pi or terminal theme.
+
+Type `/pi-emote ` to see autocomplete suggestions for `switch` and `toggle`.
+
+With clip sets, editing your prompt wakes an idle or sleepy avatar into listening. Continued edits keep it attentive; after a ten-second pause it can return to idle at a loop boundary. Typing does not restart the listening loop or interrupt work and reactions. Draft text stays local: the typing observer neither logs nor sends it, and makes no classifier calls.
 
 ## Config
 
@@ -255,6 +261,47 @@ This matches only `claude` models thinking at `high` level — anything else fal
 
 Order matters: later entries override earlier ones, so put broad mappings first and refinements last. A warning is logged when two entries clash within the same dimension (two model patterns or two thinking-level patterns both match); a model entry and a thinking-level entry matching together is intentional layering and stays silent.
 See `emotes/default/emotes.json` for per-set frame config (blink frames, talk weights).
+
+### Ordered animation clips
+
+Image sets can define named `clips` in `emotes.json`. Each clip lists PNG filenames in playback order, their existing state directory, and milliseconds per frame:
+
+```json
+{
+  "clips": {
+    "working": {
+      "state": "write",
+      "frames": ["typing-00.png", "typing-01.png"],
+      "frameMs": 80
+    }
+  }
+}
+```
+
+Clip mode requires `idle`, `hello`, `listening`, `thinking`, `searching`, `working`, `focused`, `error`, `dizzy`, and `sleepy`. Include all ten in a complete set. Missing files or an incomplete activity set fall back to the original state animations. ASCII rendering also keeps its original behavior.
+
+Clips loop forward without random frame selection or ping-pong playback. Normal expression changes wait at least 2.4 seconds and the end of a loop. Repeated activity does not restart playback, and only the latest requested activity is retained. Tool errors can interrupt immediately. Work becomes focused after 15 seconds; after settlement the avatar listens, becomes idle after 10 seconds, and sleeps after 60 seconds.
+
+Optional global or project configuration:
+
+```json
+{
+  "motion": { "minHoldMs": 2400, "reducedMotion": false },
+  "reactions": { "enabled": true, "classifier": "typesafe/jev-latest" }
+}
+```
+
+`minHoldMs` is bounded to 2400–10000 ms. `reducedMotion: true` uses one still pose per expression while retaining the hold time. These settings apply only to clip sets; `cycleMs` still controls original state animations.
+
+### Optional Jev reactions
+
+Reactions are off unless `reactions.enabled` is explicitly `true`. They use Pi's registered classifier and credentials, independently of capability lazy-loading. There is no extra SDK or service to install.
+
+After the agent settles, Jev can select `happy`, `celebrating`, `love`, `wink`, `surprised`, `confused`, `sad`, or `grumpy`. Add matching clips to the set. The choice reflects the latest exchange; it is not proof of task success. Native activity remains responsible for typing, searching, errors, compaction, and idle behavior.
+
+Enabling reactions sends up to 1500 characters each of the latest visible user and assistant text to the configured classifier provider. Thinking, tool payloads, and conversation history are not included. Requests have a 15-second cooldown and a 1.5-second deadline. Missing credentials, errors, uncertain answers, and stale results leave the activity animation in place. Hiding the widget or ending the session cancels pending work. Reactions never execute tools or alter the conversation.
+
+Run `/reload` after changing emote assets or configuration.
 
 ## License
 

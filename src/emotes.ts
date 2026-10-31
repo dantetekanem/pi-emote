@@ -56,13 +56,46 @@ export function findEmoteSetDir(setName: string, extDir: string, cwd: string): s
   return join(extDir, "emotes", "default");
 }
 
+export function listEmoteSets(extDir: string, cwd: string): string[] {
+  const homeDir = process.env.HOME ?? process.env.USERPROFILE ?? "";
+  const roots = [
+    join(cwd, ".pi/extensions/pi-emote/emotes"),
+    join(homeDir, ".pi/agent/extensions/pi-emote/emotes"),
+    join(extDir, "emotes"),
+  ];
+  const names = new Set<string>();
+  const states = ["hi", "idle", "think", "talk", "read", "write", "tool", "success", "failure", "compact"];
+  for (const root of roots) {
+    if (!existsSync(root)) continue;
+    for (const entry of readdirSync(root, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const dir = findEmoteSetDir(entry.name, extDir, cwd);
+      const hasImages = states.some((state) => existsSync(join(dir, state))
+        && readdirSync(join(dir, state)).some((file) => file.endsWith(".png")));
+      if (hasImages || existsSync(join(dir, "ascii.yaml"))) names.add(entry.name);
+    }
+  }
+  return [...names].sort();
+}
+
 // --- Frame Loading ---
 
 export function loadEmotesConfig(emoteSetDir: string): EmotesConfig {
   const configPath = join(emoteSetDir, "emotes.json");
   if (existsSync(configPath)) {
     try {
-      return JSON.parse(readFileSync(configPath, "utf-8"));
+      const config = JSON.parse(readFileSync(configPath, "utf-8"));
+      if (!config || typeof config !== "object" || Array.isArray(config)) return {};
+      if (config.clips) {
+        const states = ["hi", "idle", "think", "talk", "read", "write", "tool", "success", "failure", "compact"];
+        const valid = typeof config.clips === "object" && !Array.isArray(config.clips)
+          && Object.values(config.clips).every((clip: any) => clip && states.includes(clip.state)
+            && Array.isArray(clip.frames) && clip.frames.length > 0
+            && clip.frames.every((file: unknown) => typeof file === "string" && /^[^/\\]+\.png$/.test(file)
+              && existsSync(join(emoteSetDir, clip.state, file))));
+        if (!valid) delete config.clips;
+      }
+      return config;
     } catch {
       return {};
     }

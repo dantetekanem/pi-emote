@@ -1,4 +1,4 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 
 interface VisibilityActions {
   show(): void;
@@ -53,15 +53,32 @@ export function restoreWidgetVisibility(
   return visible ? visibility.show() : visibility.hide();
 }
 
-export function registerVisibilityCommand(pi: ExtensionAPI, visibility: WidgetVisibility) {
-  pi.registerCommand("pi-emote-toggle", {
-    description: "Show or hide the pi-emote widget",
-    handler: async (_args, ctx) => {
-      if (!ctx.hasUI) return;
-
-      const visible = visibility.toggle();
-      pi.appendEntry("pi-emote-visibility", { visible });
-      ctx.ui.notify(`[pi-emote] Widget ${visible ? "shown" : "hidden"}.`, "info");
+export function registerEmoteCommand(
+  pi: ExtensionAPI,
+  visibility: WidgetVisibility,
+  switchSet: (ctx: ExtensionCommandContext) => void | Promise<void>,
+) {
+  pi.registerCommand("pi-emote", {
+    description: "Select an emote set or show/hide the widget: /pi-emote switch|toggle",
+    getArgumentCompletions: (prefix) => {
+      const matches = ["switch", "toggle"].filter((name) => name.startsWith(prefix));
+      return matches.length ? matches.map((name) => ({ value: name, label: name })) : null;
+    },
+    handler: async (args, ctx) => {
+      if (!ctx.hasUI || ctx.mode !== "tui") return;
+      switch (args.trim()) {
+        case "switch":
+          await switchSet(ctx);
+          return;
+        case "toggle": {
+          const visible = visibility.toggle();
+          pi.appendEntry("pi-emote-visibility", { visible });
+          ctx.ui.notify(`[pi-emote] Widget ${visible ? "shown" : "hidden"}.`, "info");
+          return;
+        }
+        default:
+          ctx.ui.notify("Usage: /pi-emote switch|toggle", "info");
+      }
     },
   });
 }

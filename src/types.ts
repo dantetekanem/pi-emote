@@ -42,6 +42,8 @@ export interface Config {
   blinkInterval: [number, number];
   talkTickMs: number;
   cycleMs: number;
+  motion?: { reducedMotion?: boolean; minHoldMs?: number };
+  reactions?: { enabled?: boolean; classifier?: string };
   emotes: EmoteMapping[];
   terminals: TerminalMapping[];
   theme: WidgetTheme;
@@ -65,7 +67,14 @@ export interface ResolvedRenderer {
   warningLevel: "warning" | "info";
 }
 
+export interface AnimationClip {
+  state: EmoteState;
+  frames: string[];
+  frameMs: number;
+}
+
 export interface EmotesConfig {
+  clips?: Record<string, AnimationClip>;
   idle?: { default?: string; blink?: string };
   think?: { default?: string; hard?: string };
   talk?: { weights?: Record<string, number> };

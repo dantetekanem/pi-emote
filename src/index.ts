@@ -1,13 +1,14 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 import { existsSync, readdirSync } from "node:fs";
 
 import type { EmoteState, ResolvedRenderer } from "./types.js";
 import type { Renderer } from "./renderer.js";
 import { log, setDebug } from "./log.js";
 import { loadLayeredConfig } from "./config.js";
-import { resolveEmoteSet, findEmoteSetDir, loadEmotesConfig } from "./emotes.js";
+import { resolveEmoteSet, findEmoteSetDir, listEmoteSets, loadEmotesConfig } from "./emotes.js";
 import { KittyRenderer } from "./render_kitty.js";
 import { TmuxKittyRenderer } from "./render_tmux_kitty.js";
 import { KittyUnicodeRenderer, TmuxKittyUnicodeRenderer } from "./render_tmux_kitty_unicode.js";
@@ -15,9 +16,13 @@ import { ITermRenderer } from "./render_iterm.js";
 import { TmuxITermRenderer } from "./render_tmux_iterm.js";
 import { AsciiRenderer } from "./render_ascii.js";
 import { Animator } from "./animator.js";
+import { ClipPlayer } from "./clip-player.js";
+import { registerClipEvents } from "./clip-events.js";
+import { ReactionSelector } from "./reactions.js";
+import { watchTyping } from "./typing.js";
 import { createWidgetFactory } from "./widget.js";
 import { resolveRenderer } from "./terminal.js";
-import { createWidgetVisibility, registerVisibilityCommand, restoreWidgetVisibility } from "./visibility.js";
+import { createWidgetVisibility, registerEmoteCommand, restoreWidgetVisibility } from "./visibility.js";
 
 const IMAGE_STATES = ["hi", "idle", "think", "talk", "read", "write", "tool", "success", "failure", "compact"];
 
@@ -84,14 +89,32 @@ export default function (pi: ExtensionAPI) {
 
   // Emote set state
   let currentEmoteSet = "default";
-  let ctxRef: any = null;
+  let sessionEmoteSet: string | null = null;
+  let stopTyping: (() => void) | undefined;
+  let ctxRef: ExtensionContext | null = null;
+  let clipPlayer: ClipPlayer | null = null;
+  let clipEvents: ReturnType<typeof registerClipEvents> | null = null;
   let introTimer: ReturnType<typeof setTimeout> | null = null;
   let lastResolved = resolveRenderer(config.terminals, userConfiguredTerminals);
   let renderer = createRendererFromResolved(lastResolved, config.size);
 
   const animator = new Animator(config, renderer);
+  const reactions = new ReactionSelector({
+    classify: (context, signal) => {
+      if (!ctxRef) throw new Error("No active session");
+      const [provider, ...id] = (config.reactions?.classifier ?? "typesafe/jev-latest").split("/");
+      const model = ctxRef.modelRegistry.findOfType("classifier", provider, id.join("/"));
+      if (!model) throw new Error("Expression classifier unavailable");
+      return ctxRef.modelRegistry.classify(model, context, { signal });
+    },
+    onReaction: (reaction) => { if (visibility.isVisible()) clipPlayer?.react(reaction); },
+  });
 
   function loadEmoteSet(setName: string) {
+    animator.clearAllTimers();
+    clipEvents?.stop();
+    clipPlayer?.stop();
+    clipPlayer = null;
     currentEmoteSet = setName;
 
     const setDir = findEmoteSetDir(setName, extDir, cwd);
@@ -115,17 +138,25 @@ export default function (pi: ExtensionAPI) {
     const emotesConfig = loadEmotesConfig(setDir);
     renderer.loadFrames(setDir, extDir);
     animator.setEmotesConfig(emotesConfig);
+    if (!(renderer instanceof AsciiRenderer) && emotesConfig.clips) {
+      const player = new ClipPlayer(emotesConfig.clips,
+        (state, file) => renderer.showFrame(state, file), config.motion ?? {});
+      const activities = ["idle", "hello", "listening", "thinking", "searching", "working", "focused", "error", "dizzy", "sleepy"];
+      if (activities.every((name) => player.has(name))) clipPlayer = player;
+    }
   }
 
   loadEmoteSet("default");
 
   function switchEmoteSet(modelId: string, thinkingLevel: string) {
-    const setName = resolveEmoteSet(modelId, thinkingLevel, config.emotes);
+    const setName = sessionEmoteSet ?? resolveEmoteSet(modelId, thinkingLevel, config.emotes);
     if (setName !== currentEmoteSet) {
       loadEmoteSet(setName);
       log(`switchEmoteSet: loaded "${setName}", state="${animator.currentState}"`);
       animator.resetRenderCache();
-      if (visibility.isVisible() && animator.currentState === "idle") {
+      if (visibility.isVisible() && clipPlayer) {
+        clipEvents?.reset();
+      } else if (visibility.isVisible() && animator.currentState === "idle") {
         animator.enterIdle();
       } else if (visibility.isVisible()) {
         renderer.showRandomFrame(animator.currentState, true);
@@ -144,6 +175,12 @@ export default function (pi: ExtensionAPI) {
       const modelId = ctxRef?.model?.id ?? "";
       switchEmoteSet(modelId, pi.getThinkingLevel());
 
+      if (!ctxRef) return;
+      stopTyping?.();
+      stopTyping = watchTyping(ctxRef.ui, () => {
+        clearIntroTimer();
+        clipEvents?.wake();
+      });
       ctxRef.ui.setWidget("emote", createWidgetFactory({
         animator,
         config,
@@ -153,25 +190,82 @@ export default function (pi: ExtensionAPI) {
       }), { placement: "aboveEditor" });
 
       animator.resetRenderCache();
-      animator.transitionTo("idle");
+      if (clipPlayer) clipEvents?.reset();
+      else animator.transitionTo("idle");
     },
     hide: () => {
+      stopTyping?.();
+      stopTyping = undefined;
       clearIntroTimer();
+      clipEvents?.stop();
+      reactions.cancel();
       animator.clearAllTimers();
       animator.disposeRenderer();
-      ctxRef.ui.setWidget("emote", undefined);
+      ctxRef?.ui.setWidget("emote", undefined);
       animator.setTui(null);
     },
   });
 
-  registerVisibilityCommand(pi, visibility);
+  registerEmoteCommand(pi, visibility, async (ctx) => {
+    const sets = listEmoteSets(extDir, cwd);
+    if (!sets.length) {
+      ctx.ui.notify("[pi-emote] No emote sets found.", "warning");
+      return;
+    }
+    const next = await ctx.ui.select(`Select emote set (current: ${currentEmoteSet})`, sets);
+    if (!next || !sets.includes(next) || next === currentEmoteSet) return;
+
+    const current = loadEmotesConfig(findEmoteSetDir(currentEmoteSet, extDir, cwd));
+    const setDir = findEmoteSetDir(next, extDir, cwd);
+    const nextConfig = loadEmotesConfig(setDir);
+    sessionEmoteSet = next;
+    clearIntroTimer();
+    if (clipPlayer && current.clips && isDeepStrictEqual(current.clips, nextConfig.clips)) {
+      // Matching clips can change artwork without restarting their current animation.
+      renderer.loadFrames(setDir, extDir);
+      animator.setEmotesConfig(nextConfig);
+      currentEmoteSet = next;
+      animator.resetRenderCache();
+      if (visibility.isVisible()) clipPlayer.refresh();
+    } else {
+      const shown = visibility.isVisible();
+      if (shown) visibility.hide();
+      loadEmoteSet(next);
+      if (shown) visibility.show();
+    }
+    pi.appendEntry("pi-emote-set", { setName: next });
+    ctx.ui.notify(`[pi-emote] Switched to ${next}.`, "info");
+  });
+
+  function restoreSessionEmoteSet(ctx: ExtensionContext) {
+    sessionEmoteSet = null;
+    for (const entry of ctx.sessionManager.getBranch()) {
+      if (entry.type !== "custom" || entry.customType !== "pi-emote-set") continue;
+      const data = entry.data;
+      if (data && typeof data === "object" && "setName" in data
+        && typeof data.setName === "string" && listEmoteSets(extDir, cwd).includes(data.setName)) {
+        sessionEmoteSet = data.setName;
+      }
+    }
+  }
+
+  clipEvents = registerClipEvents(pi, {
+    getPlayer: () => clipPlayer,
+    isVisible: () => visibility.isVisible(),
+    cancelReaction: () => reactions.cancel(),
+    requestReaction: (input) => {
+      if (config.reactions?.enabled === true && ctxRef?.mode === "tui") void reactions.request(input);
+    },
+  });
 
   // --- Events ---
 
+  pi.on("agent_start", clearIntroTimer);
   pi.on("session_start", async (_event, ctx) => {
     log(`session_start: hasUI=${ctx.hasUI}`);
-    if (!ctx.hasUI) return;
+    if (ctx.mode !== "tui") return;
 
+    clipEvents.stop();
     animator.clearAllTimers();
     cwd = ctx.cwd;
     ({ config, userConfiguredTerminals } = loadLayeredConfig(extDir, cwd));
@@ -196,19 +290,32 @@ export default function (pi: ExtensionAPI) {
     // Resolve emote set for current model and thinking level
     const modelId = ctx.model?.id ?? "";
     const thinkingLevel = pi.getThinkingLevel();
-    const setName = resolveEmoteSet(modelId, thinkingLevel, config.emotes);
+    restoreSessionEmoteSet(ctx);
+    const setName = sessionEmoteSet ?? resolveEmoteSet(modelId, thinkingLevel, config.emotes);
     log(`session_start: model="${modelId}" thinkingLevel="${thinkingLevel}" set="${setName}" dir="${findEmoteSetDir(setName, extDir, cwd)}"`);
     loadEmoteSet(setName);
 
     if (!restoreWidgetVisibility(visibility, ctx.sessionManager.getEntries())) return;
     introTimer = setTimeout(() => {
       introTimer = null;
-      if (visibility.isVisible()) animator.transitionTo("hi");
+      if (!visibility.isVisible()) return;
+      if (clipPlayer) clipPlayer.react("hello");
+      else animator.transitionTo("hi");
     }, 500);
   });
 
+  pi.on("session_tree", (_event, ctx) => {
+    restoreSessionEmoteSet(ctx);
+    switchEmoteSet(ctx.model?.id ?? "", pi.getThinkingLevel());
+  });
+
   pi.on("session_shutdown", async (_event, ctx) => {
+    stopTyping?.();
+    stopTyping = undefined;
     clearIntroTimer();
+    clipEvents.stop();
+    reactions.cancel();
+    animator.clearAllTimers();
     if (visibility.isVisible() && ctx.hasUI) visibility.hide();
     ctxRef = null;
   });
@@ -231,7 +338,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("message_update", async (event) => {
-    if (!visibility.isVisible()) return;
+    if (!visibility.isVisible() || clipPlayer) return;
     if (event.message?.role !== "assistant") return;
 
     const streamEvent = event.assistantMessageEvent;
@@ -266,7 +373,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("agent_end", async () => {
-    if (!visibility.isVisible()) return;
+    if (!visibility.isVisible() || clipPlayer) return;
     if (animator.currentState === "talk") {
       animator.endTalk();
     } else if (animator.currentState !== "idle" && animator.currentState !== "hi" && animator.currentState !== "compact") {
@@ -275,12 +382,13 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("tool_execution_start", async (event) => {
-    if (!visibility.isVisible()) return;
+    clearIntroTimer();
+    if (!visibility.isVisible() || clipPlayer) return;
     animator.transitionTo(toolNameToState(event.toolName));
   });
 
   pi.on("tool_execution_end", async (event) => {
-    if (!visibility.isVisible()) return;
+    if (!visibility.isVisible() || clipPlayer) return;
     if (event.toolName === "bash" && event.isError) {
       animator.setHoldNextState("read");
       animator.transitionTo("failure");
@@ -290,12 +398,12 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("session_before_compact", async () => {
-    if (!visibility.isVisible()) return;
+    if (!visibility.isVisible() || clipPlayer) return;
     animator.transitionTo("compact");
   });
 
   pi.on("session_compact", async () => {
-    if (!visibility.isVisible()) return;
+    if (!visibility.isVisible() || clipPlayer) return;
     animator.transitionTo("idle");
   });
 }

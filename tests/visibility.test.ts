@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-import { createWidgetVisibility, registerVisibilityCommand, restoreWidgetVisibility } from "../src/visibility.ts";
+import { createWidgetVisibility, registerEmoteCommand, restoreWidgetVisibility } from "../src/visibility.ts";
 
-test("pi-emote-toggle hides and restores the widget for the current session", async () => {
+test("pi-emote toggle hides and restores the widget for the current session", async () => {
   const transitions: string[] = [];
   const notices: string[] = [];
   const entries: { customType: string; data: unknown }[] = [];
@@ -15,7 +15,7 @@ test("pi-emote-toggle hides and restores the widget for the current session", as
 
   let commandName = "";
   let handler: ((args: string, ctx: any) => Promise<void>) | undefined;
-  registerVisibilityCommand({
+  registerEmoteCommand({
     appendEntry(customType: string, data: unknown) {
       entries.push({ customType, data });
     },
@@ -23,15 +23,15 @@ test("pi-emote-toggle hides and restores the widget for the current session", as
       commandName = name;
       handler = options.handler;
     },
-  } as unknown as ExtensionAPI, visibility);
+  } as unknown as ExtensionAPI, visibility, () => {});
 
   visibility.show();
   assert.equal(visibility.isVisible(), true);
   assert.deepEqual(transitions, ["show"]);
-  assert.equal(commandName, "pi-emote-toggle");
+  assert.equal(commandName, "pi-emote");
 
   const ctx = {
-    hasUI: true,
+    hasUI: true, mode: "tui",
     ui: {
       notify(message: string) {
         notices.push(message);
@@ -39,7 +39,7 @@ test("pi-emote-toggle hides and restores the widget for the current session", as
     },
   };
 
-  await handler!("", ctx);
+  await handler!("toggle", ctx);
   assert.equal(visibility.isVisible(), false);
   assert.deepEqual(transitions, ["show", "hide"]);
   assert.equal(notices.at(-1), "[pi-emote] Widget hidden.");
@@ -48,12 +48,38 @@ test("pi-emote-toggle hides and restores the widget for the current session", as
   const savedEntries = () => entries.map((entry) => ({ type: "custom", ...entry }));
   assert.equal(restoreWidgetVisibility(reloaded, savedEntries()), false);
 
-  await handler!("", ctx);
+  await handler!("toggle", ctx);
   assert.equal(visibility.isVisible(), true);
   assert.deepEqual(transitions, ["show", "hide", "show"]);
   assert.equal(notices.at(-1), "[pi-emote] Widget shown.");
   assert.deepEqual(entries.at(-1), { customType: "pi-emote-visibility", data: { visible: true } });
   assert.equal(restoreWidgetVisibility(reloaded, savedEntries()), true);
+});
+
+test("pi-emote completes subcommands and awaits the selection handler", async () => {
+  let command!: Parameters<ExtensionAPI["registerCommand"]>[1];
+  let finish!: () => void;
+  const selection = new Promise<void>((resolve) => { finish = resolve; });
+  const visibility = createWidgetVisibility({ show() {}, hide() {} });
+  registerEmoteCommand({
+    registerCommand(_name, options) { command = options; },
+  } as ExtensionAPI, visibility, () => selection);
+
+  assert.deepEqual(command.getArgumentCompletions!(""), [
+    { value: "switch", label: "switch" },
+    { value: "toggle", label: "toggle" },
+  ]);
+  assert.deepEqual(command.getArgumentCompletions!("sw"), [{ value: "switch", label: "switch" }]);
+  assert.deepEqual(command.getArgumentCompletions!("to"), [{ value: "toggle", label: "toggle" }]);
+  assert.equal(command.getArgumentCompletions!("unknown"), null);
+
+  let settled = false;
+  const run = command.handler("switch", { hasUI: true, mode: "tui" } as any).then(() => { settled = true; });
+  await Promise.resolve();
+  assert.equal(settled, false);
+  finish();
+  await run;
+  assert.equal(settled, true);
 });
 
 test("reload restores the latest session choice without mounting a hidden widget", () => {
@@ -103,13 +129,13 @@ test("the visibility lifecycle is idempotent and ignores commands without a UI",
   assert.deepEqual(transitions, ["show", "hide"]);
 
   let handler: ((args: string, ctx: any) => Promise<void>) | undefined;
-  registerVisibilityCommand({
+  registerEmoteCommand({
     registerCommand(_name: string, options: { handler: typeof handler }) {
       handler = options.handler;
     },
-  } as unknown as ExtensionAPI, visibility);
+  } as unknown as ExtensionAPI, visibility, () => {});
 
-  await handler!("", { hasUI: false, ui: { notify() {} } });
+  await handler!("toggle", { hasUI: false, mode: "tui", ui: { notify() {} } });
   assert.equal(visibility.isVisible(), false);
   assert.deepEqual(transitions, ["show", "hide"]);
 });
