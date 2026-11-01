@@ -28,16 +28,22 @@ const hooks = registerHooks({
 const { default: extension } = await import("../src/index.ts");
 hooks.deregister();
 
-function setup(t, { enabled = true, clips = true, image = true } = {}) {
+function setup(t, { enabled = true, clips = true, image = true, projectReactions } = {}) {
   t.mock.timers.enable({ apis: ["Date", "setTimeout", "setInterval"] });
   const home = mkdtempSync(join(tmpdir(), "hobkin-integration-"));
   t.mock.property(process, "env", { HOME: home, TERM_PROGRAM: "herdr", HERDR_ENV: "1" });
   const configDir = join(home, ".pi/agent/extensions/pi-emote");
   mkdirSync(configDir, { recursive: true });
   writeFileSync(join(configDir, "config.json"), JSON.stringify({
-    emotes: [{ model: "*", "emote-set": "fixture" }], reactions: { enabled },
+    emotes: [{ model: "*", "emote-set": "fixture" }],
+    reactions: enabled === null ? undefined : { enabled },
     terminals: [{ match: "herdr", render: image ? "kitty-unicode" : "ascii" }],
   }));
+  if (projectReactions) {
+    const projectDir = join(home, ".pi/extensions/pi-emote");
+    mkdirSync(projectDir, { recursive: true });
+    writeFileSync(join(projectDir, "config.json"), JSON.stringify({ reactions: projectReactions }));
+  }
   const setDir = join(configDir, "emotes/fixture");
   mkdirSync(join(setDir, "idle"), { recursive: true });
   const names = ["idle", "hello", "listening", "thinking", "searching", "working", "focused", "error", "dizzy", "sleepy", "love"];
@@ -58,6 +64,7 @@ function setup(t, { enabled = true, clips = true, image = true } = {}) {
   const commands = new Map();
   const writes = [];
   const classifications = [];
+  const registryLookups = [];
   const entries = [];
   const selections = [];
   let selected = "fixture-black";
@@ -74,7 +81,10 @@ function setup(t, { enabled = true, clips = true, image = true } = {}) {
     },
     sessionManager: { getEntries: () => entries, getBranch: () => entries, getSessionId: () => "test" },
     modelRegistry: {
-      findOfType(kind, provider, id) { assert.deepEqual([kind, provider, id], ["classifier", "typesafe", "jev-latest"]); return model; },
+      findOfType(kind, provider, id) {
+        registryLookups.push([kind, provider, id]);
+        return model;
+      },
       classify(chosen, context, options) {
         assert.equal(chosen, model);
         classifications.push({ context, signal: options.signal });
@@ -93,14 +103,14 @@ function setup(t, { enabled = true, clips = true, image = true } = {}) {
   const emit = async (name, event = {}) => { for (const handler of handlers.get(name) ?? []) await handler(event, ctx); };
   t.after(async () => { await emit("session_shutdown"); rmSync(home, { recursive: true, force: true }); });
   const frames = () => writes.flatMap(w => [...w.matchAll(/\x1b_G[^;]+;([A-Za-z0-9+/=]+)\x1b\\/g)].map(m => Buffer.from(m[1], "base64").toString()));
-  return { emit, ctx, commands, frames, classifications, entries, selections,
+  return { emit, ctx, commands, frames, classifications, registryLookups, entries, selections,
     choose(name) { selected = name; },
     type(text) { input?.(); draft = text; },
     finish: result => resolve(result) };
 }
 
 test("real extension plays clips, opts into native Jev and cancels it when hidden", async t => {
-  const { emit, commands, ctx, frames, classifications } = setup(t);
+  const { emit, commands, ctx, frames, classifications, registryLookups } = setup(t);
   await emit("session_start");
   assert.equal(frames().at(-1), "idle-0.png");
   await emit("before_agent_start", { messageType: "user", prompt: "thanks" });
@@ -108,6 +118,7 @@ test("real extension plays clips, opts into native Jev and cancels it when hidde
   await emit("message_end", { message: { role: "assistant", stopReason: "stop", content: [{ type: "text", text: "Glad that helped." }] } });
   await emit("agent_settled");
   assert.equal(classifications.length, 1);
+  assert.deepEqual(registryLookups, [["classifier", "typesafe", "jev-latest"]]);
   assert.deepEqual(classifications[0].context.state, { userText: "thanks", assistantText: "Glad that helped." });
   await commands.get("pi-emote")("toggle", ctx);
   assert.equal(classifications[0].signal.aborted, true);
@@ -212,13 +223,22 @@ test("switch lists all sets, applies the selected one, and leaves cancellation u
   assert.equal(frames().length, frameCount);
 });
 
-for (const options of [{ enabled: false }, { clips: false }, { image: false }]) {
+for (const options of [
+  { enabled: false },
+  { clips: false },
+  { image: false },
+  { enabled: null, projectReactions: { enabled: true } },
+  { enabled: false, projectReactions: { enabled: true } },
+  { projectReactions: { classifier: "other/private" } },
+  { projectReactions: { enabled: false } },
+]) {
   test(`no semantic calls when unavailable: ${JSON.stringify(options)}`, async t => {
-    const { emit, classifications } = setup(t, options);
+    const { emit, classifications, registryLookups } = setup(t, options);
     await emit("session_start");
     await emit("before_agent_start", { messageType: "user", prompt: "thanks" });
     await emit("message_end", { message: { role: "assistant", stopReason: "stop", content: [{ type: "text", text: "Done." }] } });
     await emit("agent_settled");
     assert.equal(classifications.length, 0);
+    assert.equal(registryLookups.length, 0);
   });
 }
