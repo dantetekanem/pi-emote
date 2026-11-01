@@ -103,7 +103,17 @@ export function loadLayeredConfig(extDir: string, cwd: string): ConfigResult {
   let merged = DEFAULTS;
   if (extConfig) merged = deepMerge(merged, extConfig);
   if (userConfig) merged = deepMerge(merged, userConfig);
+  const classifier = merged.reactions?.classifier ?? "typesafe/jev-latest";
   if (projectConfig) merged = deepMerge(merged, projectConfig);
+
+  // Only the user can consent to sharing text; a project cannot change its destination.
+  const projectClassifier = projectConfig?.reactions?.classifier;
+  merged.reactions = {
+    enabled: userConfig?.reactions?.enabled === true
+      && projectConfig?.reactions?.enabled !== false
+      && (projectClassifier === undefined || projectClassifier === classifier),
+    classifier,
+  };
 
   // "emotes" — append arrays in priority order (last match wins)
   merged.emotes = mergeEmotes(

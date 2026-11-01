@@ -286,8 +286,7 @@ Optional global or project configuration:
 
 ```json
 {
-  "motion": { "minHoldMs": 2400, "reducedMotion": false },
-  "reactions": { "enabled": true, "classifier": "typesafe/jev-latest" }
+  "motion": { "minHoldMs": 2400, "reducedMotion": false }
 }
 ```
 
@@ -295,7 +294,17 @@ Optional global or project configuration:
 
 ### Optional Jev reactions
 
-Reactions are off unless `reactions.enabled` is explicitly `true`. They use Pi's registered classifier and credentials, independently of capability lazy-loading. There is no extra SDK or service to install.
+Reactions require explicit consent in your user-global `~/.pi/agent/extensions/pi-emote/config.json`:
+
+```json
+{
+  "reactions": { "enabled": true, "classifier": "typesafe/jev-latest" }
+}
+```
+
+Only `reactions.enabled: true` in that file permits text sharing. Extension defaults and project config cannot opt you in or override a user refusal. The classifier comes from user-global config, then extension defaults, then `typesafe/jev-latest`. Project config can disable reactions with `reactions.enabled: false`; specifying a different classifier disables reactions for that project rather than redirecting your text or credentials. Put classifier changes in your user-global file.
+
+Reactions use Pi's registered classifier and credentials, independently of capability lazy-loading. There is no extra SDK or service to install.
 
 After the agent settles, Jev can select `happy`, `celebrating`, `love`, `wink`, `surprised`, `confused`, `sad`, or `grumpy`. Add matching clips to the set. The choice reflects the latest exchange; it is not proof of task success. Native activity remains responsible for typing, searching, errors, compaction, and idle behavior.
 
