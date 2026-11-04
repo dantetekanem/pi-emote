@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { registerHooks } from "node:module";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -93,17 +93,26 @@ function setup(t, { enabled = true, clips = true, image = true, projectReactions
     },
   };
   t.mock.method(process.stdout, "write", data => { writes.push(String(data)); return true; });
-  extension({
+  const install = () => extension({
     on(name, handler) { const list = handlers.get(name) ?? []; list.push(handler); handlers.set(name, list); },
     registerCommand(name, options) { commands.set(name, options.handler); },
     getThinkingLevel: () => "high",
     appendEntry(customType, data) { entries.push({ type: "custom", customType, data }); },
     events: { on() {} },
   });
+  install();
   const emit = async (name, event = {}) => { for (const handler of handlers.get(name) ?? []) await handler(event, ctx); };
   t.after(async () => { await emit("session_shutdown"); rmSync(home, { recursive: true, force: true }); });
   const frames = () => writes.flatMap(w => [...w.matchAll(/\x1b_G[^;]+;([A-Za-z0-9+/=]+)\x1b\\/g)].map(m => Buffer.from(m[1], "base64").toString()));
   return { emit, ctx, commands, frames, classifications, registryLookups, entries, selections,
+    configPath: join(configDir, "config.json"),
+    savedConfig: () => JSON.parse(readFileSync(join(configDir, "config.json"), "utf8")),
+    async reload() {
+      await emit("session_shutdown");
+      handlers.clear();
+      install();
+      await emit("session_start");
+    },
     choose(name) { selected = name; },
     type(text) { input?.(); draft = text; },
     finish: result => resolve(result) };
@@ -128,12 +137,12 @@ test("real extension plays clips, opts into native Jev and cancels it when hidde
 });
 
 test("switch preserves compatible clip position and persists the chosen set", async t => {
-  const { emit, commands, ctx, frames, entries, choose } = setup(t);
+  const { emit, commands, ctx, frames, savedConfig, choose } = setup(t);
   await emit("session_start");
   t.mock.timers.tick(100);
   await commands.get("pi-emote")("switch", ctx);
   assert.equal(frames().at(-1), "black:idle-1.png");
-  assert.deepEqual(entries.at(-1), { type: "custom", customType: "pi-emote-set", data: { setName: "fixture-black" } });
+  assert.deepEqual(savedConfig().emotes.at(-1), { model: "*", "emote-set": "fixture-black" });
   await emit("model_select", { model: { id: "another" } });
   await emit("session_shutdown");
   await emit("session_start");
@@ -143,7 +152,7 @@ test("switch preserves compatible clip position and persists the chosen set", as
   choose("red");
   await commands.get("pi-emote")("switch", ctx);
   assert.equal(frames().length, count);
-  assert.notEqual(entries.at(-1).data.setName, "fixture-black");
+  assert.equal(savedConfig().emotes.at(-1)["emote-set"], "red");
   await commands.get("pi-emote")("toggle", ctx);
   assert.ok(frames().length > count);
 });
@@ -186,28 +195,30 @@ test("typing wakes immediately, extends attention, and neither calls Jev nor int
   assert.equal(frames().length, count);
 });
 
-test("set choice follows the active branch and a new session returns to the configured set", async t => {
-  const { emit, commands, ctx, frames, entries } = setup(t);
+test("global choice survives reload, old session entries, and new sessions in another project", async t => {
+  const { emit, commands, ctx, frames, entries, savedConfig, reload } = setup(t);
+  const before = savedConfig();
+  entries.push({ type: "custom", customType: "pi-emote-set", data: { setName: "fixture" } });
   await emit("session_start");
   await commands.get("pi-emote")("switch", ctx);
+  assert.deepEqual(savedConfig(), { ...before, emotes: [{ model: "*", "emote-set": "fixture-black" }] });
+  await reload();
   assert.equal(frames().at(-1), "black:idle-0.png");
-  ctx.sessionManager.getBranch = () => [];
   await emit("session_tree");
-  assert.equal(frames().at(-1), "idle-0.png");
-  await commands.get("pi-emote")("switch", ctx);
-  await emit("session_shutdown");
+  assert.equal(frames().at(-1), "black:idle-0.png");
   entries.length = 0;
-  await emit("session_start");
-  assert.equal(frames().at(-1), "idle-0.png");
+  ctx.cwd = join(ctx.cwd, "another-project");
+  await reload();
+  assert.equal(frames().at(-1), "black:idle-0.png");
 });
 
 test("switch lists all sets, applies the selected one, and leaves cancellation unchanged", async t => {
-  const { emit, commands, ctx, frames, entries, selections, choose } = setup(t);
+  const { emit, commands, ctx, frames, savedConfig, selections, choose } = setup(t);
   await emit("session_start");
-  for (const name of ["red", "ascii", "fixture-black", "fixture"]) {
+  for (const name of ["default", "red", "ascii", "fixture-black", "fixture"]) {
     choose(name);
     await commands.get("pi-emote")("switch", ctx);
-    assert.equal(entries.at(-1)?.data.setName, name);
+    assert.equal(savedConfig().emotes.at(-1)["emote-set"], name);
   }
   const options = selections[0].options;
   assert.deepEqual(options, [...new Set(options)].sort());
@@ -215,12 +226,28 @@ test("switch lists all sets, applies the selected one, and leaves cancellation u
     assert.ok(options.includes(name), `selector includes ${name}`);
   }
   assert.equal(frames().at(-1), "idle-0.png");
-  const savedCount = entries.length;
+  const saved = savedConfig();
   const frameCount = frames().length;
   choose(undefined);
   await commands.get("pi-emote")("switch", ctx);
-  assert.equal(entries.length, savedCount);
+  assert.deepEqual(savedConfig(), saved);
   assert.equal(frames().length, frameCount);
+});
+
+test("selecting the current set saves it globally, and a failed save leaves the avatar unchanged", async t => {
+  const { emit, commands, ctx, frames, configPath, savedConfig, choose } = setup(t);
+  await emit("session_start");
+  writeFileSync(configPath, JSON.stringify({ emotes: [{ model: "*", "emote-set": "fixture-black" }] }));
+  choose("fixture");
+  await commands.get("pi-emote")("switch", ctx);
+  assert.equal(savedConfig().emotes.at(-1)["emote-set"], "fixture");
+  writeFileSync(configPath, "invalid json");
+  const notify = t.mock.method(ctx.ui, "notify");
+  choose("fixture-black");
+  await commands.get("pi-emote")("switch", ctx);
+  assert.equal(readFileSync(configPath, "utf8"), "invalid json");
+  assert.equal(frames().at(-1), "idle-0.png");
+  assert.equal(notify.mock.calls.at(-1).arguments[1], "error");
 });
 
 for (const options of [

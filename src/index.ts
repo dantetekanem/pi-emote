@@ -7,7 +7,7 @@ import { existsSync, readdirSync } from "node:fs";
 import type { EmoteState, ResolvedRenderer } from "./types.js";
 import type { Renderer } from "./renderer.js";
 import { log, setDebug } from "./log.js";
-import { loadLayeredConfig } from "./config.js";
+import { loadLayeredConfig, saveGlobalEmoteSet } from "./config.js";
 import { resolveEmoteSet, findEmoteSetDir, listEmoteSets, loadEmotesConfig } from "./emotes.js";
 import { KittyRenderer } from "./render_kitty.js";
 import { TmuxKittyRenderer } from "./render_tmux_kitty.js";
@@ -89,7 +89,6 @@ export default function (pi: ExtensionAPI) {
 
   // Emote set state
   let currentEmoteSet = "default";
-  let sessionEmoteSet: string | null = null;
   let stopTyping: (() => void) | undefined;
   let ctxRef: ExtensionContext | null = null;
   let clipPlayer: ClipPlayer | null = null;
@@ -149,7 +148,7 @@ export default function (pi: ExtensionAPI) {
   loadEmoteSet("default");
 
   function switchEmoteSet(modelId: string, thinkingLevel: string) {
-    const setName = sessionEmoteSet ?? resolveEmoteSet(modelId, thinkingLevel, config.emotes);
+    const setName = resolveEmoteSet(modelId, thinkingLevel, config.emotes);
     if (setName !== currentEmoteSet) {
       loadEmoteSet(setName);
       log(`switchEmoteSet: loaded "${setName}", state="${animator.currentState}"`);
@@ -213,12 +212,19 @@ export default function (pi: ExtensionAPI) {
       return;
     }
     const next = await ctx.ui.select(`Select emote set (current: ${currentEmoteSet})`, sets);
-    if (!next || !sets.includes(next) || next === currentEmoteSet) return;
+    if (!next || !sets.includes(next)) return;
+    try {
+      saveGlobalEmoteSet(next);
+    } catch (error) {
+      ctx.ui.notify(`[pi-emote] Could not save global emote: ${error instanceof Error ? error.message : String(error)}`, "error");
+      return;
+    }
+    config.emotes.push({ model: "*", "emote-set": next });
+    if (next === currentEmoteSet) return;
 
     const current = loadEmotesConfig(findEmoteSetDir(currentEmoteSet, extDir, cwd));
     const setDir = findEmoteSetDir(next, extDir, cwd);
     const nextConfig = loadEmotesConfig(setDir);
-    sessionEmoteSet = next;
     clearIntroTimer();
     if (clipPlayer && current.clips && isDeepStrictEqual(current.clips, nextConfig.clips)) {
       // Matching clips can change artwork without restarting their current animation.
@@ -233,21 +239,8 @@ export default function (pi: ExtensionAPI) {
       loadEmoteSet(next);
       if (shown) visibility.show();
     }
-    pi.appendEntry("pi-emote-set", { setName: next });
-    ctx.ui.notify(`[pi-emote] Switched to ${next}.`, "info");
+    ctx.ui.notify(`[pi-emote] Switched to ${next} (saved globally).`, "info");
   });
-
-  function restoreSessionEmoteSet(ctx: ExtensionContext) {
-    sessionEmoteSet = null;
-    for (const entry of ctx.sessionManager.getBranch()) {
-      if (entry.type !== "custom" || entry.customType !== "pi-emote-set") continue;
-      const data = entry.data;
-      if (data && typeof data === "object" && "setName" in data
-        && typeof data.setName === "string" && listEmoteSets(extDir, cwd).includes(data.setName)) {
-        sessionEmoteSet = data.setName;
-      }
-    }
-  }
 
   clipEvents = registerClipEvents(pi, {
     getPlayer: () => clipPlayer,
@@ -290,8 +283,7 @@ export default function (pi: ExtensionAPI) {
     // Resolve emote set for current model and thinking level
     const modelId = ctx.model?.id ?? "";
     const thinkingLevel = pi.getThinkingLevel();
-    restoreSessionEmoteSet(ctx);
-    const setName = sessionEmoteSet ?? resolveEmoteSet(modelId, thinkingLevel, config.emotes);
+    const setName = resolveEmoteSet(modelId, thinkingLevel, config.emotes);
     log(`session_start: model="${modelId}" thinkingLevel="${thinkingLevel}" set="${setName}" dir="${findEmoteSetDir(setName, extDir, cwd)}"`);
     loadEmoteSet(setName);
 
@@ -305,7 +297,6 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("session_tree", (_event, ctx) => {
-    restoreSessionEmoteSet(ctx);
     switchEmoteSet(ctx.model?.id ?? "", pi.getThinkingLevel());
   });
 

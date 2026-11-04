@@ -1,5 +1,5 @@
-import { readFileSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import { readFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import type { Config, EmoteMapping, TerminalMapping } from "./types.js";
 import { DEFAULT_WIDGET_THEME, sanitizeWidgetTheme } from "./theme.js";
 
@@ -86,6 +86,23 @@ function mergeTerminals(...layers: (TerminalMapping[] | undefined)[]): TerminalM
     }
   }
   return result.size > 0 ? [...result.values()] : DEFAULTS.terminals;
+}
+
+export function saveGlobalEmoteSet(setName: string) {
+  const homeDir = process.env.HOME ?? process.env.USERPROFILE;
+  if (!homeDir) throw new Error("Home directory is unavailable.");
+  const path = join(homeDir, ".pi", "agent", "extensions", "pi-emote", "config.json");
+  const config = existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : {};
+  if (!config || typeof config !== "object" || Array.isArray(config)) {
+    throw new Error("Global config must be a JSON object.");
+  }
+  const mappings: EmoteMapping[] = config.emotes ?? [];
+  config.emotes = [
+    ...mappings.filter((entry) => entry.model !== "*" || entry["thinking-level"]),
+    { model: "*", "emote-set": setName },
+  ];
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`);
 }
 
 export function loadLayeredConfig(extDir: string, cwd: string): ConfigResult {

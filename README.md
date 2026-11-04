@@ -54,7 +54,7 @@ pi install git:github.com/dantetekanem/pi-emote
 
 Use `/pi-emote toggle` to hide or restore the widget for the current session. Your choice survives `/reload` and resuming that session. New sessions use the configured default; the command does not change the `enabled` setting.
 
-Use `/pi-emote switch` to select from a list of all installed emote sets, sorted alphabetically, including image, ASCII, and custom sets from the extension, user, and project directories. Press Escape to cancel without changing the avatar. Sets with the same name appear once, using the usual project → user → extension priority. Matching animation clips retain their playback position; other sets start fresh. The choice follows the current session branch, survives reload/resume, and overrides model mappings until a new session. The command does not change your Pi or terminal theme.
+Use `/pi-emote switch` to select from a list of all installed emote sets, sorted alphabetically, including image, ASCII, and custom sets from the extension, user, and project directories. Press Escape to cancel without changing the avatar. Sets with the same name appear once, using the usual project → user → extension priority. Matching animation clips retain their playback position; other sets start fresh. The choice is saved to `~/.pi/agent/extensions/pi-emote/config.json` as the global default for all models, including after reloads and in new sessions. Other settings are preserved. Project-local emote mappings still take precedence on reload. The command does not change your Pi or terminal theme.
 
 Type `/pi-emote ` to see autocomplete suggestions for `switch` and `toggle`.
 
